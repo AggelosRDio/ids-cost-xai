@@ -18,6 +18,11 @@ class Logger:
         timestamp = f"[{datetime.now().strftime('%H:%M:%S')}] " if self.show_time else ""
         print(colour + f"{timestamp}[{level}]: {message}" + self.reset)
 
+    def blank(self, message):
+        if self.log_level <= 0:
+            print(message)
+
+
     def info(self, message):
         if self.log_level <= 0:
             self._log("info", message, self.colours["info"])
