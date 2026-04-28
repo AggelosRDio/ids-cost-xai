@@ -8,6 +8,8 @@ from sklearn.model_selection import train_test_split
 
 log = Logger()
 
+# https://www.kaggle.com/datasets/hassan06/nslkdd
+
 NSLKDD_COLUMNS = [
     "duration", "protocol_type", "service", "flag", "src_bytes",
     "dst_bytes", "land", "wrong_fragment", "urgent", "hot",
@@ -55,7 +57,7 @@ URLS = {
     }
 
 
-def download_data(dir: str = "data/raw") -> dict[str, str]:
+def download_data(dir: str = "data/nslkdd/raw") -> dict[str, str]:
     os.makedirs(dir, exist_ok=True)
     paths = {}
     for split, url in URLS.items():
@@ -169,7 +171,7 @@ def run_pipeline(val_size: float = 0.15, test_size: float = 0.15, random_state: 
     for name, X, y in [("Train", X_train, y_train), ("Validation", X_val, y_val), ("Test", X_test, y_test)]:
         out = X.copy()
         out["macro_label"] = y.values
-        save_dir = "data/processed"
+        save_dir = "data/nslkdd/processed"
         os.makedirs(save_dir, exist_ok=True)
         path = os.path.join(save_dir, f"nslkdd_{name.lower()}.csv")
         out.to_csv(path, index=False)
