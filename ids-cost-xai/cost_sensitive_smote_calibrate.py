@@ -7,10 +7,10 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 
 from imblearn.over_sampling import SMOTE
 
@@ -44,36 +44,41 @@ y_test_enc  = le.transform(y_test)
 
 print("Classes:", le.classes_)
 
-n_classes = len(le.classes_)
+
+# ==================================================
+# CHECK CLASS COUNTS
+# ==================================================
+unique, counts = np.unique(y_train_enc, return_counts=True)
+print("\nOriginal distribution:")
+for u, c in zip(unique, counts):
+    print(le.inverse_transform([u])[0], ":", c)
 
 
 # ==================================================
-# SCALING
+# SMOTE (CONTROLLED)
 # ==================================================
-scaler = StandardScaler()
+# mapping:
+# DoS=0, Normal=1, Probe=2, R2L=3, U2R=4
 
-X_train_scaled = scaler.fit_transform(X_train)
-X_val_scaled   = scaler.transform(X_val)
-X_test_scaled  = scaler.transform(X_test)
-
-
-# ==================================================
-# SMOTE
-# ==================================================
 smote = SMOTE(
     sampling_strategy={
-        2: 15000,
-        3: 5000,
-        4: 2000
+        2: 15000,   # Probe
+        3: 5000,    # R2L
+        4: 2000     # U2R
     },
     random_state=42
 )
 
-X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train_enc)
+X_train_res, y_train_res = smote.fit_resample(X_train, y_train_enc)
+
+print("\nAfter SMOTE:")
+unique, counts = np.unique(y_train_res, return_counts=True)
+for u, c in zip(unique, counts):
+    print(le.inverse_transform([u])[0], ":", c)
 
 
 # ==================================================
-# MODEL
+# BASE MODEL
 # ==================================================
 model = RandomForestClassifier(
     n_estimators=200,
@@ -85,7 +90,7 @@ model.fit(X_train_res, y_train_res)
 
 
 # ==================================================
-# CALIBRATION
+# CALIBRATION (IMPORTANT)
 # ==================================================
 cal_model = CalibratedClassifierCV(
     model,
@@ -93,21 +98,7 @@ cal_model = CalibratedClassifierCV(
     cv=5
 )
 
-cal_model.fit(X_val_scaled, y_val_enc)
-
-
-# ==================================================
-# ANOMALY DETECTOR
-# ==================================================
-normal_class = "Normal" if "Normal" in y_train.values else y_train.value_counts().idxmax()
-normal_mask = (y_train.values == normal_class)
-
-iso = IsolationForest(
-    contamination=0.02,
-    random_state=42
-)
-
-iso.fit(X_train_scaled[normal_mask])
+cal_model.fit(X_val, y_val_enc)
 
 
 # ==================================================
@@ -116,96 +107,55 @@ iso.fit(X_train_scaled[normal_mask])
 cost_matrix = np.array([
     [0, 1, 2, 5, 10],
     [1, 0, 2, 5, 10],
-    [2, 2, 0, 4, 8],
-    [6, 6, 4, 0, 4],
-    [10,10,8,4,  0]
+    [2, 2, 0, 5, 10],
+    [5, 5, 3, 0, 10],
+    [10,10,10,5,  0]
 ])
 
 
 # ==================================================
-# HYBRID MODEL (FINAL FIXED VERSION)
+# COST-SENSITIVE PREDICTION
 # ==================================================
-def hybrid_predict(X, entropy_threshold=1.2):
+def predict_cost_sensitive(model, X, cost_matrix):
 
-    probs = cal_model.predict_proba(X)
+    probs = model.predict_proba(X)
     preds = []
 
     for i in range(len(X)):
 
-        sample = X[i:i+1]
-        sample_probs = probs[i].copy()
+        sample_probs = probs[i]
+        costs = []
 
-        # =====================
-        # ANOMALY LAYER
-        # =====================
-        if iso.predict(sample)[0] == -1:
-            sample_probs += np.array([0.0, 0.0, 0.0, 0.15, 0.20])
+        for c in range(len(cost_matrix)):
+            expected_cost = np.sum(sample_probs * cost_matrix[c])
+            costs.append(expected_cost)
 
-        sample_probs = sample_probs / (np.sum(sample_probs) + 1e-12)
-
-        # =====================
-        # ENTROPY
-        # =====================
-        entropy = -np.sum(sample_probs * np.log(sample_probs + 1e-12))
-
-        # =====================
-        # COST DECISION BASELINE
-        # =====================
-        expected_costs = cost_matrix.T @ sample_probs
-
-        # =====================
-        # 🔥 ENTROPY EFFECT (REAL IMPACT)
-        # =====================
-        if entropy > entropy_threshold:
-            scale = entropy / (entropy_threshold + 1e-12)
-
-            expected_costs[3] *= (1.0 / scale)  # R2L
-            expected_costs[4] *= (1.0 / scale)  # U2R
-
-        best_class = int(np.argmin(expected_costs))
-        preds.append(le.inverse_transform([best_class])[0])
+        best_class = np.argmin(costs)
+        preds.append(best_class)
 
     return np.array(preds)
 
 
 # ==================================================
-# THRESHOLD TUNING
+# VALIDATION
 # ==================================================
-print("\n================ THRESHOLD TUNING ================\n")
+print("\n================ VALIDATION ================\n")
 
-thresholds = np.arange(0.5, 3.0, 0.1)
+y_val_pred_enc = predict_cost_sensitive(cal_model, X_val, cost_matrix)
+y_val_pred = le.inverse_transform(y_val_pred_enc)
 
-best_threshold = None
-best_score = -1
-
-for th in thresholds:
-
-    val_preds = hybrid_predict(X_val_scaled, entropy_threshold=th)
-
-    report = classification_report(y_val, val_preds, output_dict=True)
-
-    score = (
-        report.get("R2L", {}).get("recall", 0) +
-        report.get("U2R", {}).get("recall", 0)
-    )
-
-    print(f"Threshold {th:.2f} -> score {score:.4f}")
-
-    if score > best_score:
-        best_score = score
-        best_threshold = th
-
-print("\nBEST THRESHOLD:", best_threshold)
+print(classification_report(y_val, y_val_pred))
 
 
 # ==================================================
-# FINAL TEST
+# TEST
 # ==================================================
 print("\n================ TEST ================\n")
 
-test_preds = hybrid_predict(X_test_scaled, entropy_threshold=best_threshold)
+y_test_pred_enc = predict_cost_sensitive(cal_model, X_test, cost_matrix)
+y_test_pred = le.inverse_transform(y_test_pred_enc)
 
-print(classification_report(y_test, test_preds))
+print(classification_report(y_test, y_test_pred))
 
 
 # ==================================================
@@ -213,7 +163,7 @@ print(classification_report(y_test, test_preds))
 # ==================================================
 cm = confusion_matrix(
     y_test,
-    test_preds,
+    y_test_pred,
     labels=le.classes_
 )
 
@@ -222,9 +172,9 @@ print(cm)
 
 
 # ==================================================
-# CRITICAL RESULTS
+# CRITICAL CLASSES
 # ==================================================
-report = classification_report(y_test, test_preds, output_dict=True)
+report = classification_report(y_test, y_test_pred, output_dict=True)
 
 print("\n================ CRITICAL RESULTS ================\n")
 print("R2L Recall:", report.get("R2L", {}).get("recall", 0))

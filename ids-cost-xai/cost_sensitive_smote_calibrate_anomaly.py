@@ -48,7 +48,7 @@ n_classes = len(le.classes_)
 
 
 # ==================================================
-# SCALING
+# SCALING (IMPORTANT FOR ISOLATION FOREST)
 # ==================================================
 scaler = StandardScaler()
 
@@ -62,9 +62,9 @@ X_test_scaled  = scaler.transform(X_test)
 # ==================================================
 smote = SMOTE(
     sampling_strategy={
-        2: 15000,
-        3: 5000,
-        4: 2000
+        2: 15000,   # Probe
+        3: 5000,    # R2L
+        4: 2000     # U2R
     },
     random_state=42
 )
@@ -73,7 +73,7 @@ X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train_enc)
 
 
 # ==================================================
-# MODEL
+# MAIN MODEL
 # ==================================================
 model = RandomForestClassifier(
     n_estimators=200,
@@ -97,9 +97,10 @@ cal_model.fit(X_val_scaled, y_val_enc)
 
 
 # ==================================================
-# ANOMALY DETECTOR
+# ANOMALY DETECTOR (FIXED ALIGNMENT)
 # ==================================================
 normal_class = "Normal" if "Normal" in y_train.values else y_train.value_counts().idxmax()
+
 normal_mask = (y_train.values == normal_class)
 
 iso = IsolationForest(
@@ -111,7 +112,7 @@ iso.fit(X_train_scaled[normal_mask])
 
 
 # ==================================================
-# COST MATRIX
+# COST MATRIX (STABILIZED VERSION)
 # ==================================================
 cost_matrix = np.array([
     [0, 1, 2, 5, 10],
@@ -121,11 +122,13 @@ cost_matrix = np.array([
     [10,10,8,4,  0]
 ])
 
+assert cost_matrix.shape == (n_classes, n_classes), "Cost matrix mismatch!"
+
 
 # ==================================================
-# HYBRID MODEL (FINAL FIXED VERSION)
+# HYBRID PREDICTION (FIXED + STABLE)
 # ==================================================
-def hybrid_predict(X, entropy_threshold=1.2):
+def hybrid_predict(X):
 
     probs = cal_model.predict_proba(X)
     preds = []
@@ -133,34 +136,25 @@ def hybrid_predict(X, entropy_threshold=1.2):
     for i in range(len(X)):
 
         sample = X[i:i+1]
+
+        # =====================
+        # ANOMALY DETECTION
+        # =====================
+        anomaly_flag = iso.predict(sample)[0]
+
         sample_probs = probs[i].copy()
 
-        # =====================
-        # ANOMALY LAYER
-        # =====================
-        if iso.predict(sample)[0] == -1:
-            sample_probs += np.array([0.0, 0.0, 0.0, 0.15, 0.20])
+        # Soft anomaly influence (NO HARD OVERRIDE)
+        if anomaly_flag == -1:
+            sample_probs = sample_probs + np.array([0.0, 0.0, 0.0, 0.80, 0.90])
 
+        # normalize safely
         sample_probs = sample_probs / (np.sum(sample_probs) + 1e-12)
 
         # =====================
-        # ENTROPY
-        # =====================
-        entropy = -np.sum(sample_probs * np.log(sample_probs + 1e-12))
-
-        # =====================
-        # COST DECISION BASELINE
+        # COST-SENSITIVE DECISION
         # =====================
         expected_costs = cost_matrix.T @ sample_probs
-
-        # =====================
-        # 🔥 ENTROPY EFFECT (REAL IMPACT)
-        # =====================
-        if entropy > entropy_threshold:
-            scale = entropy / (entropy_threshold + 1e-12)
-
-            expected_costs[3] *= (1.0 / scale)  # R2L
-            expected_costs[4] *= (1.0 / scale)  # U2R
 
         best_class = int(np.argmin(expected_costs))
         preds.append(le.inverse_transform([best_class])[0])
@@ -169,42 +163,20 @@ def hybrid_predict(X, entropy_threshold=1.2):
 
 
 # ==================================================
-# THRESHOLD TUNING
+# VALIDATION
 # ==================================================
-print("\n================ THRESHOLD TUNING ================\n")
+print("\n================ VALIDATION ================\n")
 
-thresholds = np.arange(0.5, 3.0, 0.1)
-
-best_threshold = None
-best_score = -1
-
-for th in thresholds:
-
-    val_preds = hybrid_predict(X_val_scaled, entropy_threshold=th)
-
-    report = classification_report(y_val, val_preds, output_dict=True)
-
-    score = (
-        report.get("R2L", {}).get("recall", 0) +
-        report.get("U2R", {}).get("recall", 0)
-    )
-
-    print(f"Threshold {th:.2f} -> score {score:.4f}")
-
-    if score > best_score:
-        best_score = score
-        best_threshold = th
-
-print("\nBEST THRESHOLD:", best_threshold)
+val_preds = hybrid_predict(X_val_scaled)
+print(classification_report(y_val, val_preds))
 
 
 # ==================================================
-# FINAL TEST
+# TEST
 # ==================================================
 print("\n================ TEST ================\n")
 
-test_preds = hybrid_predict(X_test_scaled, entropy_threshold=best_threshold)
-
+test_preds = hybrid_predict(X_test_scaled)
 print(classification_report(y_test, test_preds))
 
 
@@ -222,7 +194,7 @@ print(cm)
 
 
 # ==================================================
-# CRITICAL RESULTS
+# CRITICAL CLASSES
 # ==================================================
 report = classification_report(y_test, test_preds, output_dict=True)
 
