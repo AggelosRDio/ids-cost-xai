@@ -6,14 +6,16 @@ warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
-
+from imblearn.over_sampling import ADASYN
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.preprocessing import LabelEncoder
-
+from sklearn.preprocessing import LabelEncoder,MinMaxScaler
+from imblearn.combine import SMOTETomek
 from imblearn.over_sampling import SMOTE
-
+from imblearn.combine import SMOTEENN
+from imblearn.over_sampling import BorderlineSMOTE
+from sklearn.frozen import FrozenEstimator
 
 # ==================================================
 # LOAD DATA
@@ -59,17 +61,45 @@ for u, c in zip(unique, counts):
 # ==================================================
 # mapping:
 # DoS=0, Normal=1, Probe=2, R2L=3, U2R=4
+scaler=MinMaxScaler()
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
 
+X_train = pd.DataFrame(X_train, columns=train.drop(columns=[target]).columns)   
+X_val = pd.DataFrame(X_val, columns=val.drop(columns=[target]).columns)
+X_test = pd.DataFrame(X_test, columns=test.drop(columns=[target]).columns)
+
+#smote = SMOTE(
+ #   sampling_strategy={
+  #      2: 15000,   # Probe
+#     3: 5000,    # R2L
+ #       4: 2000     # U2R
+  #  },
+   # random_state=42
+#)
+#smote_tomek = SMOTETomek(smote=smote, random_state=42)
+#X_train_res, y_train_res = smote_tomek.fit_resample(X_train, y_train_enc)
+#adasyn = ADASYN(sampling_strategy={2: 15000, 3: 5000, 4: 2000}, random_state=42)
+#X_train_res, y_train_res = adasyn.fit_resample(X_train, y_train_enc)
 smote = SMOTE(
     sampling_strategy={
-        2: 15000,   # Probe
-        3: 5000,    # R2L
-        4: 2000     # U2R
+        2:15000,
+        3:5000,
+        4:2000
     },
     random_state=42
 )
 
-X_train_res, y_train_res = smote.fit_resample(X_train, y_train_enc)
+smote_enn = SMOTEENN(
+    smote=smote,
+    random_state=42
+)
+
+X_train_res, y_train_res = smote_enn.fit_resample(
+    X_train,
+    y_train_enc
+)
 
 print("\nAfter SMOTE:")
 unique, counts = np.unique(y_train_res, return_counts=True)
@@ -81,7 +111,13 @@ for u, c in zip(unique, counts):
 # BASE MODEL
 # ==================================================
 model = RandomForestClassifier(
-    n_estimators=200,
+    n_estimators=500,
+    max_depth=25,
+    min_samples_split=5,
+    min_samples_leaf=5,
+    max_features="sqrt",
+    bootstrap=True,
+    class_weight={0:1, 1:1, 2:2, 3:6, 4:15},
     random_state=42,
     n_jobs=-1
 )
@@ -92,10 +128,11 @@ model.fit(X_train_res, y_train_res)
 # ==================================================
 # CALIBRATION (IMPORTANT)
 # ==================================================
+
+frozen_model = FrozenEstimator(model)
 cal_model = CalibratedClassifierCV(
-    model,
-    method="isotonic",
-    cv=5
+    frozen_model,
+    method="sigmoid"
 )
 
 cal_model.fit(X_val, y_val_enc)
