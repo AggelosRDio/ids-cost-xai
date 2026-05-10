@@ -6,6 +6,7 @@ warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from xgboost import XGBClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, confusion_matrix
@@ -14,6 +15,7 @@ from imblearn.combine import SMOTETomek
 from imblearn.over_sampling import SMOTE
 from imblearn.combine import SMOTEENN
 from sklearn.frozen import FrozenEstimator
+
 
 # ==================================================
 # LOAD DATA
@@ -53,7 +55,22 @@ print("\nOriginal distribution:")
 for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
 
+##αφαιρεση χαραξτηριστικων που δεν βοηθουν στην διακριση των κλασεων και εχουν πολυ χαμηλη συχνοτητα 
+cols_to_drop = ['num_outbound_cmds', 'is_host_login', 'is_guest_login']
+X_train = X_train.drop(columns=cols_to_drop)
+X_val = X_val.drop(columns=cols_to_drop)
+X_test = X_test.drop(columns=cols_to_drop)
 
+###Log transformation για να μειωσει την skewness των χαρακτηριστικων που εχουν μεγαλη διασπορα και skewness, βοηθαει το μοντελο να μαθει καλυτερα τις κλασεις που εχουν λιγοτερα δειγματα.
+skewed_features = ['duration', 'src_bytes', 'dst_bytes', 'wrong_fragment', 'urgent', 'hot', 
+                   'num_failed_logins', 'num_compromised', 'num_root', 'num_file_creations']
+
+# Εφαρμόζουμε log(1+x) για να αποφύγουμε το log(0)
+for col in skewed_features:
+    if col in X_train.columns:
+        X_train[col] = np.log1p(X_train[col])
+        X_val[col]   = np.log1p(X_val[col])
+        X_test[col]  = np.log1p(X_test[col])
 # ==================================================
 # SMOTE (CONTROLLED)
 # ==================================================
@@ -64,16 +81,14 @@ X_train = scaler.fit_transform(X_train)
 X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
 
-X_train = pd.DataFrame(X_train, columns=train.drop(columns=[target]).columns)   
-X_val = pd.DataFrame(X_val, columns=val.drop(columns=[target]).columns)
-X_test = pd.DataFrame(X_test, columns=test.drop(columns=[target]).columns)
+
 
 
 smote = SMOTE(
     sampling_strategy={
-    2:10000,
-    3:1200,
-    4:100
+    2:15000,
+    3:20000,
+    4:5000
 },
     random_state=42
 )
@@ -99,17 +114,20 @@ for u, c in zip(unique, counts):
 # ==================================================
 model = XGBClassifier(
     n_estimators=300,
-    max_depth=6,
+    max_depth=4,
     learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
+    subsample=0.7,
+    colsample_bytree=0.7,
     objective="multi:softprob",
     num_class=5,
     eval_metric="mlogloss",
     random_state=42,
     n_jobs=-1
 )
-model.fit(X_train_res, y_train_res)
+
+weights = np.where(y_train_res == 3, 10, 1) 
+weights = np.where(y_train_res == 4, 50, weights) 
+model.fit(X_train_res, y_train_res, sample_weight=weights)
 
 
 # ==================================================
@@ -195,11 +213,3 @@ print("\nConfusion Matrix:\n")
 print(cm)
 
 
-# ==================================================
-# CRITICAL CLASSES
-# ==================================================
-report = classification_report(y_test, y_test_pred, output_dict=True)
-
-print("\n================ CRITICAL RESULTS ================\n")
-print("R2L Recall:", report.get("R2L", {}).get("recall", 0))
-print("U2R Recall:", report.get("U2R", {}).get("recall", 0))

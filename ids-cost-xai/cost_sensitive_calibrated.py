@@ -69,7 +69,6 @@ cal_model.fit(X_val, y_val_enc)
 
 # ==================================================
 # COST MATRIX
-# order: [DoS, Normal, Probe, R2L, U2R]
 # ==================================================
 cost_matrix = np.array([
     [0, 1, 2, 5, 10],
@@ -138,11 +137,3 @@ print("\nConfusion Matrix:\n")
 print(cm)
 
 
-# ==================================================
-# CRITICAL CLASSES
-# ==================================================
-report = classification_report(y_test, y_test_pred, output_dict=True)
-
-print("\n================ CRITICAL RESULTS ================\n")
-print("R2L Recall:", report.get("R2L", {}).get("recall", 0))
-print("U2R Recall:", report.get("U2R", {}).get("recall", 0))
