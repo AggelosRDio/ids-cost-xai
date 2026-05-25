@@ -14,6 +14,7 @@ from imblearn.combine import SMOTETomek
 from imblearn.over_sampling import SMOTE
 from imblearn.combine import SMOTEENN
 from sklearn.frozen import FrozenEstimator
+from sklearn.model_selection import train_test_split
 
 # ==================================================
 # LOAD DATA
@@ -71,6 +72,9 @@ X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
 
 
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
 
 
 smote = SMOTE(
@@ -120,7 +124,7 @@ cal_model = CalibratedClassifierCV(
     method="sigmoid"
 )
 
-cal_model.fit(X_val, y_val_enc)
+cal_model.fit(X_calib, y_calib_enc)
 
 # ==================================================
 # COST MATRIX
@@ -157,9 +161,9 @@ def predict_cost_sensitive(model, X, cost_matrix):
 # ==================================================
 # VALIDATION
 # ==================================================
-y_val_pred_enc = predict_cost_sensitive(cal_model, X_val, cost_matrix)
+y_val_pred_enc = predict_cost_sensitive(cal_model, X_val_eval, cost_matrix)
 y_val_pred = le.inverse_transform(y_val_pred_enc)
-
+y_val_eval = le.inverse_transform(y_val_eval_enc)
 # ==================================================
 # TEST
 # ==================================================
@@ -420,4 +424,3 @@ global_explainability(
     R2L_CLASS_INDEX,
     "R2L"
 )
-

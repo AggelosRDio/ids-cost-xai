@@ -11,8 +11,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
-
-
+from sklearn.model_selection import train_test_split 
+from sklearn.frozen import FrozenEstimator
 # ==================================================
 # LOAD DATA
 # ==================================================
@@ -31,7 +31,6 @@ y_val = val[target]
 X_test = test.drop(columns=[target])
 y_test = test[target]
 
-
 # ==================================================
 # LABEL ENCODING
 # ==================================================
@@ -42,7 +41,6 @@ y_test_enc  = le.transform(y_test)
 
 print("Classes:", le.classes_)
 
-
 # ==================================================
 # BASE MODEL
 # ==================================================
@@ -52,20 +50,29 @@ model = RandomForestClassifier(
     n_jobs=-1
 )
 
+
 model.fit(X_train, y_train_enc)
 
+# ==================================================
+# SPLIT VALIDATION SET 
+# ==================================================
+
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
 
 # ==================================================
 # PROBABILITY CALIBRATION 
 # ==================================================
+frozen_model = FrozenEstimator(model)
 cal_model = CalibratedClassifierCV(
-    model,
-    method="isotonic",  
-    cv=5
+    frozen_model,
+    method="sigmoid",
 )
 
-cal_model.fit(X_val, y_val_enc)
 
+
+cal_model.fit(X_calib, y_calib_enc)
 
 # ==================================================
 # COST MATRIX
@@ -78,17 +85,14 @@ cost_matrix = np.array([
     [10,10,10,5,  0]
 ])
 
-
 # ==================================================
 # COST-SENSITIVE PREDICTION
 # ==================================================
 def predict_cost_sensitive(model, X, cost_matrix):
-
     probs = model.predict_proba(X)
     preds = []
 
     for i in range(len(X)):
-
         sample_probs = probs[i]
         costs = []
 
@@ -101,17 +105,19 @@ def predict_cost_sensitive(model, X, cost_matrix):
 
     return np.array(preds)
 
-
 # ==================================================
 # VALIDATION EVALUATION
 # ==================================================
 print("\n================ VALIDATION ================\n")
 
-y_val_pred_enc = predict_cost_sensitive(cal_model, X_val, cost_matrix)
+
+y_val_pred_enc = predict_cost_sensitive(cal_model, X_val_eval, cost_matrix)
+
+
 y_val_pred = le.inverse_transform(y_val_pred_enc)
+y_val_eval = le.inverse_transform(y_val_eval_enc)
 
-print(classification_report(y_val, y_val_pred))
-
+print(classification_report(y_val_eval, y_val_pred))
 
 # ==================================================
 # TEST EVALUATION
@@ -122,7 +128,6 @@ y_test_pred_enc = predict_cost_sensitive(cal_model, X_test, cost_matrix)
 y_test_pred = le.inverse_transform(y_test_pred_enc)
 
 print(classification_report(y_test, y_test_pred))
-
 
 # ==================================================
 # CONFUSION MATRIX
@@ -135,5 +140,3 @@ cm = confusion_matrix(
 
 print("\nConfusion Matrix:\n")
 print(cm)
-
-

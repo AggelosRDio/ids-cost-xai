@@ -16,6 +16,7 @@ from imblearn.over_sampling import SMOTE
 from imblearn.combine import SMOTEENN
 from imblearn.over_sampling import BorderlineSMOTE
 from sklearn.frozen import FrozenEstimator
+from sklearn.model_selection import train_test_split
 
 # ==================================================
 # LOAD DATA
@@ -81,7 +82,12 @@ X_train = scaler.fit_transform(X_train)
 X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
 
-
+# ==================================================
+# SPLIT VALIDATION SET 
+# ==================================================
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
 
 
 smote = SMOTE(
@@ -109,7 +115,6 @@ print("\nAfter SMOTE:")
 unique, counts = np.unique(y_train_res, return_counts=True)
 for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
-
 
 # ==================================================
 # BASE MODEL
@@ -139,7 +144,7 @@ cal_model = CalibratedClassifierCV(
     method="sigmoid"
 )
 
-cal_model.fit(X_val, y_val_enc)
+cal_model.fit(X_calib, y_calib_enc)
 
 
 # ==================================================
@@ -182,10 +187,10 @@ def predict_cost_sensitive(model, X, cost_matrix):
 # ==================================================
 print("\n================ VALIDATION ================\n")
 
-y_val_pred_enc = predict_cost_sensitive(cal_model, X_val, cost_matrix)
+y_val_pred_enc = predict_cost_sensitive(cal_model, X_val_eval, cost_matrix)
 y_val_pred = le.inverse_transform(y_val_pred_enc)
-
-print(classification_report(y_val, y_val_pred))
+y_val_eval = le.inverse_transform(y_val_eval_enc)
+print(classification_report(y_val_eval, y_val_pred))
 
 
 # ==================================================
@@ -210,5 +215,3 @@ cm = confusion_matrix(
 
 print("\nConfusion Matrix:\n")
 print(cm)
-
-
