@@ -56,6 +56,10 @@ print("\nOriginal distribution:")
 for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
 
+# ==================================================
+# PREPROCESSING
+# ==================================================
+
 ##αφαιρεση χαραξτηριστικων που δεν βοηθουν στην διακριση των κλασεων και εχουν πολυ χαμηλη συχνοτητα 
 cols_to_drop = ['num_outbound_cmds', 'is_host_login', 'is_guest_login']
 X_train = X_train.drop(columns=cols_to_drop)
@@ -83,14 +87,6 @@ X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
 
 
-# ==================================================
-# SPLIT VALIDATION SET 
-# ==================================================
-X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
-    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
-)
-
-
 smote = SMOTE(
     sampling_strategy={
     2:15000,
@@ -114,6 +110,17 @@ print("\nAfter SMOTE:")
 unique, counts = np.unique(y_train_res, return_counts=True)
 for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
+    
+# ==================================================
+# COST MATRIX
+# ==================================================
+cost_matrix = np.array([
+    [0, 1, 2, 5, 10],
+    [1, 0, 2, 5, 10],
+    [2, 2, 0, 5, 10],
+    [5, 5, 3, 0, 10],
+    [10,10,10,5,  0]
+])
 
 
 # ==================================================
@@ -149,17 +156,12 @@ cal_model = CalibratedClassifierCV(
 
 cal_model.fit(X_calib, y_calib_enc)
 
-
 # ==================================================
-# COST MATRIX
+# SPLIT VALIDATION SET 
 # ==================================================
-cost_matrix = np.array([
-    [0, 1, 2, 5, 10],
-    [1, 0, 2, 5, 10],
-    [2, 2, 0, 5, 10],
-    [5, 5, 3, 0, 10],
-    [10,10,10,5,  0]
-])
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
 
 
 # ==================================================
