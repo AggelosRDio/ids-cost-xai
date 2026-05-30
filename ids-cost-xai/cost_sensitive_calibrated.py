@@ -42,6 +42,32 @@ y_test_enc  = le.transform(y_test)
 print("Classes:", le.classes_)
 
 # ==================================================
+# PREPROCESSING
+# ==================================================
+
+##αφαιρεση χαραξτηριστικων που δεν βοηθουν στην διακριση των κλασεων και εχουν πολυ χαμηλη συχνοτητα 
+cols_to_drop = ['num_outbound_cmds', 'is_host_login', 'is_guest_login']
+X_train = X_train.drop(columns=cols_to_drop)
+X_val = X_val.drop(columns=cols_to_drop)
+X_test = X_test.drop(columns=cols_to_drop)
+
+###Log transformation για να μειωσει την skewness των χαρακτηριστικων που εχουν μεγαλη διασπορα και skewness, βοηθαει το μοντελο να μαθει καλυτερα τις κλασεις που εχουν λιγοτερα δειγματα.
+skewed_features = ['duration', 'src_bytes', 'dst_bytes', 'wrong_fragment', 'urgent', 'hot', 
+                   'num_failed_logins', 'num_compromised', 'num_root', 'num_file_creations']
+
+# Εφαρμόζουμε log(1+x) για να αποφύγουμε το log(0)
+for col in skewed_features:
+    if col in X_train.columns:
+        X_train[col] = np.log1p(X_train[col])
+        X_val[col]   = np.log1p(X_val[col])
+        X_test[col]  = np.log1p(X_test[col])
+
+scaler=MinMaxScaler()
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
+
+# ==================================================
 # BASE MODEL
 # ==================================================
 model = RandomForestClassifier(
