@@ -56,6 +56,10 @@ print("\nOriginal distribution:")
 for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
 
+# ==================================================
+# PREPROCESSING
+# ==================================================
+
 ##αφαιρεση χαραξτηριστικων που δεν βοηθουν στην διακριση των κλασεων και εχουν πολυ χαμηλη συχνοτητα 
 cols_to_drop = ['num_outbound_cmds', 'is_host_login', 'is_guest_login']
 X_train = X_train.drop(columns=cols_to_drop)
@@ -77,17 +81,11 @@ for col in skewed_features:
 # ==================================================
 # mapping:
 # DoS=0, Normal=1, Probe=2, R2L=3, U2R=4
+
 scaler=MinMaxScaler()
 X_train = scaler.fit_transform(X_train)
 X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
-
-# ==================================================
-# SPLIT VALIDATION SET 
-# ==================================================
-X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
-    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
-)
 
 
 smote = SMOTE(
@@ -117,8 +115,23 @@ for u, c in zip(unique, counts):
     print(le.inverse_transform([u])[0], ":", c)
 
 # ==================================================
+# COST MATRIX
+# ==================================================
+cost_matrix = np.array([
+    [0, 1, 2, 5, 10],
+    [1, 0, 2, 5, 10],
+    [2, 2, 0, 5, 10],
+    [5, 5, 3, 0, 10],
+    [10,10,10,5,  0]
+])
+
+# ==================================================
 # BASE MODEL
 # ==================================================
+
+row_sums = cost_matrix.sum(axis=1)
+class_weights = {i: weight for i, weight in enumerate(row_sums / row_sums.min())}
+
 model = RandomForestClassifier(
     n_estimators=500,
     max_depth=25,
@@ -126,13 +139,19 @@ model = RandomForestClassifier(
     min_samples_leaf=5,
     max_features="sqrt",
     bootstrap=True,
-    class_weight={0:1, 1:1, 2:2, 3:6, 4:15},
+    class_weight=class_weights,
     random_state=42,
     n_jobs=-1
 )
 
 model.fit(X_train_res, y_train_res)
 
+# ==================================================
+# SPLIT VALIDATION SET 
+# ==================================================
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
 
 # ==================================================
 # CALIBRATION (IMPORTANT)
@@ -145,18 +164,6 @@ cal_model = CalibratedClassifierCV(
 )
 
 cal_model.fit(X_calib, y_calib_enc)
-
-
-# ==================================================
-# COST MATRIX
-# ==================================================
-cost_matrix = np.array([
-    [0, 1, 2, 5, 10],
-    [1, 0, 2, 5, 10],
-    [2, 2, 0, 5, 10],
-    [5, 5, 3, 0, 10],
-    [10,10,10,5,  0]
-])
 
 
 # ==================================================
