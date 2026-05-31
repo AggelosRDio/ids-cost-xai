@@ -143,6 +143,13 @@ weights = np.where(y_train_res == 3, 10, 1)
 weights = np.where(y_train_res == 4, 50, weights) 
 model.fit(X_train_res, y_train_res, sample_weight=weights)
 
+# ==================================================
+# SPLIT VALIDATION SET 
+# ==================================================
+X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
+    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
+)
+
 
 # ==================================================
 # CALIBRATION (IMPORTANT)
@@ -156,12 +163,7 @@ cal_model = CalibratedClassifierCV(
 
 cal_model.fit(X_calib, y_calib_enc)
 
-# ==================================================
-# SPLIT VALIDATION SET 
-# ==================================================
-X_calib, X_val_eval, y_calib_enc, y_val_eval_enc = train_test_split(
-    X_val, y_val_enc, test_size=0.5, random_state=42, stratify=y_val_enc
-)
+
 
 
 # ==================================================
