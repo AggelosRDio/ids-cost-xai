@@ -126,6 +126,25 @@ cost_matrix = np.array([
 # ==================================================
 # BASE MODEL
 # ==================================================
+
+#δημιουργία κατάλληλων weights βασισμένα στον cost_matrix 
+inv_freq_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(y_train_res),
+    y=y_train_res
+)
+
+fn_costs = cost_matrix[1, :].astype(float) 
+fn_costs[1] = 1.0 
+
+hybrid_fn_weights = inv_freq_weights * fn_costs
+class_weights = {i: float(w / hybrid_fn_weights.min()) for i, w in enumerate(hybrid_fn_weights)}
+
+print("\n Weights:")
+for k, v in class_weights.items():
+    print(f"Class {le.inverse_transform([k])[0]}: {v:.2f}")
+
+
 model = XGBClassifier(
     n_estimators=300,
     max_depth=4,
@@ -139,9 +158,7 @@ model = XGBClassifier(
     n_jobs=-1
 )
 
-weights = np.where(y_train_res == 3, 10, 1) 
-weights = np.where(y_train_res == 4, 50, weights) 
-model.fit(X_train_res, y_train_res, sample_weight=weights)
+model.fit(X_train_res, y_train_res, sample_weight=np.array([class_weights[i] for i in y_train_res]))
 
 # ==================================================
 # SPLIT VALIDATION SET 
@@ -222,3 +239,55 @@ cm = confusion_matrix(
 
 print("\nConfusion Matrix:\n")
 print(cm)
+
+# ==================================================
+# ROC & PRECISION-RECALL CURVES (ONE-VS-REST)
+# ==================================================
+
+def plot_evaluation_curves(model, X_test, y_test_enc, le):
+    n_classes = len(le.classes_)
+    y_test_bin = label_binarize(y_test_enc, classes=range(n_classes))
+    y_score = model.predict_proba(X_test)
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    colors = ['blue', 'red', 'green', 'orange', 'purple']
+    
+    for i, color in zip(range(n_classes), colors):
+        #  ROC Curve
+        fpr, tpr, _ = roc_curve(y_test_bin[:, i], y_score[:, i])
+        roc_auc = auc(fpr, tpr)
+        ax1.plot(fpr, tpr, color=color, lw=2,
+                 label=f'ROC {le.classes_[i]} (AUC = {roc_auc:.2f})')
+        
+        # Precision-Recall Curve
+        precision, recall, _ = precision_recall_curve(y_test_bin[:, i], y_score[:, i])
+        avg_precision = average_precision_score(y_test_bin[:, i], y_score[:, i])
+        ax2.plot(recall, precision, color=color, lw=2,
+                 label=f'PR {le.classes_[i]} (AP = {avg_precision:.2f})')
+
+    # Ρυθμίσεις ROC Plot
+    ax1.plot([0, 1], [0, 1], 'k--', lw=2)
+    ax1.set_xlim([0.0, 1.0])
+    ax1.set_ylim([0.0, 1.05])
+    ax1.set_xlabel('False Positive Rate (FPR)')
+    ax1.set_ylabel('True Positive Rate (TPR / Recall)')
+    ax1.set_title('Inappropriate for Imbalanced: ROC Curve')
+    ax1.legend(loc="lower right")
+    ax1.grid(alpha=0.3)
+
+    # Ρυθμίσεις PR Plot
+    ax2.set_xlim([0.0, 1.0])
+    ax2.set_ylim([0.0, 1.05])
+    ax2.set_xlabel('Recall (Sensitivity)')
+    ax2.set_ylabel('Precision')
+    ax2.set_title('Appropriate for Imbalanced: PR Curve')
+    ax2.legend(loc="lower left")
+    ax2.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+plot_evaluation_curves(cal_model, X_test, y_test_enc, le)
+
+
