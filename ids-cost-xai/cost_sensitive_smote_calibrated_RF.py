@@ -129,7 +129,7 @@ cost_matrix = np.array([
 # BASE MODEL
 # ==================================================
 
-row_sums = cost_matrix.sum(axis=1)
+row_sums = cost_matrix.sum(axis=0)
 class_weights = {i: weight for i, weight in enumerate(row_sums / row_sums.min())}
 
 model = RandomForestClassifier(
