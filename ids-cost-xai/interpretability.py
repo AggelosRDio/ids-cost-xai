@@ -15,6 +15,7 @@ from imblearn.over_sampling import SMOTE
 from imblearn.combine import SMOTEENN
 from sklearn.frozen import FrozenEstimator
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 
 # ==================================================
 # LOAD DATA
@@ -98,6 +99,19 @@ X_train_res, y_train_res = smote_enn.fit_resample(
 # ==================================================
 # BASE MODEL
 # ==================================================
+
+inv_freq_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(y_train_res),
+    y=y_train_res
+)
+
+fn_costs = cost_matrix[1, :].astype(float) 
+fn_costs[1] = 1.0 
+hybrid_fn_weights = inv_freq_weights * fn_costs
+class_weights = {i: float(w / hybrid_fn_weights.min()) for i, w in enumerate(hybrid_fn_weights)}
+
+
 model = XGBClassifier(
     n_estimators=300,
     max_depth=4,
@@ -111,9 +125,7 @@ model = XGBClassifier(
     n_jobs=-1
 )
 
-weights = np.where(y_train_res == 3, 10, 1) 
-weights = np.where(y_train_res == 4, 50, weights) 
-model.fit(X_train_res, y_train_res, sample_weight=weights)
+model.fit(X_train_res, y_train_res, sample_weight=np.array([class_weights[i] for i in y_train_res]))
 
 # ==================================================
 # CALIBRATION (IMPORTANT)
