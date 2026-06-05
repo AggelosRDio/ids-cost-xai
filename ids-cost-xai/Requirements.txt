@@ -1,2 +1,6 @@
 scikit-learn>=1.4.0
 pandas>=3.0.2
+notebook>=6.5.0
+matplotlib
+seaborn
+xgboost

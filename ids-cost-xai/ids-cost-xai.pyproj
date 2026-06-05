@@ -24,8 +24,8 @@
   <ItemGroup>
     <Compile Include="ids_cost_xai.py" />
     <Compile Include="logger.py" />
-    <Compile Include="nslkdd.py" />
-    <Compile Include="unsw.py" />
+    <Compile Include="Preprocessing.py" />
+    <Compile Include="Setup.py" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
@@ -39,15 +39,14 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
-    <Content Include="data\unsw\raw\UNSW_NB15_testing-set.csv" />
-    <Content Include="data\unsw\raw\UNSW_NB15_training-set.csv" />
+    <Content Include="IdsPipeline.ipynb" />
+    <Content Include="unsw\raw\UNSW_NB15_testing-set.csv" />
+    <Content Include="unsw\raw\UNSW_NB15_training-set.csv" />
     <Content Include="Requirements.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="data\" />
-    <Folder Include="data\unsw\" />
-    <Folder Include="data\nslkdd\" />
-    <Folder Include="data\unsw\raw\" />
+    <Folder Include="unsw\" />
+    <Folder Include="unsw\raw\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
