@@ -4,3 +4,4 @@ notebook>=6.5.0
 matplotlib
 seaborn
 xgboost
+shap
