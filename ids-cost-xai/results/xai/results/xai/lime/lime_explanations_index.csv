@@ -1,0 +1,9 @@
+sample_index,model,true_class,predicted_class,explanation_file
+167,baseline,R2L,Normal,results/xai/lime/lime_baseline_sample_167_true_R2L_pred_Normal.html
+167,aggressive,R2L,R2L,results/xai/lime/lime_aggressive_sample_167_true_R2L_pred_R2L.html
+246,baseline,R2L,Normal,results/xai/lime/lime_baseline_sample_246_true_R2L_pred_Normal.html
+246,aggressive,R2L,R2L,results/xai/lime/lime_aggressive_sample_246_true_R2L_pred_R2L.html
+2153,baseline,U2R,Normal,results/xai/lime/lime_baseline_sample_2153_true_U2R_pred_Normal.html
+2153,aggressive,U2R,U2R,results/xai/lime/lime_aggressive_sample_2153_true_U2R_pred_U2R.html
+9596,baseline,U2R,R2L,results/xai/lime/lime_baseline_sample_9596_true_U2R_pred_R2L.html
+9596,aggressive,U2R,U2R,results/xai/lime/lime_aggressive_sample_9596_true_U2R_pred_U2R.html
