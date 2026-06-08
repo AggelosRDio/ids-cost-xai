@@ -1,0 +1,5 @@
+sample_index,true_class,baseline_prediction,aggressive_prediction,selection_reason
+167,R2L,Normal,R2L,baseline_wrong_target_correct
+246,R2L,Normal,R2L,baseline_wrong_target_correct
+2153,U2R,Normal,U2R,baseline_wrong_target_correct
+9596,U2R,R2L,U2R,baseline_wrong_target_correct
