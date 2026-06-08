@@ -5,10 +5,9 @@ import matplotlib.pyplot as plt
 import shap
 
 from scipy.stats import spearmanr
-from xgboost import XGBClassifier
 
 
-DEFAULT_SECURITY_FEATURES = [
+DEFAULT_SECURITY_FEATURES = (
     "root_shell",
     "su_attempted",
     "num_failed_logins",
@@ -18,7 +17,7 @@ DEFAULT_SECURITY_FEATURES = [
     "num_compromised",
     "num_root",
     "num_file_creations",
-]
+)
 
 
 def ensure_dataframe(X, feature_names):
@@ -32,63 +31,40 @@ def ensure_dataframe(X, feature_names):
     return pd.DataFrame(X, columns=feature_names)
 
 
-def make_shap_sample(X, feature_names, sample_size=1000, random_state=42):
+def make_shap_sample(X, y, feature_names, n_per_class=200, random_state=42):
     """
-    Create a fixed test sample for SHAP analysis.
+    Create a stratified fixed sample for SHAP analysis.
 
-    SHAP can be computationally expensive, especially for multiclass models.
-    A fixed random sample makes the analysis faster and reproducible.
+    Random sampling can under-represent rare classes such as U2R.
+    This function samples up to n_per_class instances from each class,
+    so class-specific SHAP analysis for minority classes is more reliable.
     """
     X_df = ensure_dataframe(X, feature_names)
+    y_arr = np.asarray(y)
 
-    if sample_size is None or sample_size >= len(X_df):
-        return X_df
+    if len(X_df) != len(y_arr):
+        raise ValueError("X and y must have the same number of rows for stratified SHAP sampling.")
 
-    return X_df.sample(n=sample_size, random_state=random_state)
+    rng = np.random.RandomState(random_state)
+    selected_idx = []
 
+    for cls in np.unique(y_arr):
+        cls_idx = np.where(y_arr == cls)[0]
+        n = min(n_per_class, len(cls_idx))
+        sampled_idx = rng.choice(cls_idx, size=n, replace=False)
+        selected_idx.extend(sampled_idx)
 
-def train_raw_cost_sensitive_xgb_models(
-    regimes,
-    X_train,
-    y_train,
-    get_sample_weights_func,
-    random_state=42,
-    xgb_params=None,
-):
-    """
-    Train raw cost-sensitive XGBoost models for SHAP analysis.
+    selected_idx = np.array(selected_idx)
+    rng.shuffle(selected_idx)
 
-    Calibrated models are useful for probability calibration and evaluation,
-    but SHAP TreeExplainer works more directly and reliably with the raw tree model.
-    Therefore, we retrain raw XGBClassifier models for each cost regime.
-    """
-    if xgb_params is None:
-        xgb_params = {
-            "n_estimators": 300,
-            "max_depth": 4,
-            "learning_rate": 0.05,
-            "subsample": 0.7,
-            "colsample_bytree": 0.7,
-            "objective": "multi:softprob",
-            "num_class": 5,
-            "eval_metric": "mlogloss",
-            "random_state": random_state,
-            "n_jobs": -1,
-        }
+    X_sample = X_df.iloc[selected_idx].reset_index(drop=True)
+    y_sample = y_arr[selected_idx]
 
-    raw_models = {}
+    print(f"[XAI] Stratified SHAP sample size: {len(X_sample)}")
+    for cls, count in zip(*np.unique(y_sample, return_counts=True)):
+        print(f"[XAI] Class {cls}: {count} samples")
 
-    for regime in regimes:
-        print(f"[XAI] Training raw XGB model for SHAP — regime: {regime}")
-
-        sample_weights = get_sample_weights_func(y_train, regime=regime)
-
-        model = XGBClassifier(**xgb_params)
-        model.fit(X_train, y_train, sample_weight=sample_weights)
-
-        raw_models[regime] = model
-
-    return raw_models
+    return X_sample, y_sample
 
 
 def compute_shap_ranking(model, X_sample, feature_names, model_name):
@@ -132,26 +108,28 @@ def compute_shap_ranking(model, X_sample, feature_names, model_name):
     return shap_values, ranking
 
 
-def compute_all_shap_rankings(baseline_model, raw_cost_models, X_sample, feature_names):
+def compute_all_shap_rankings(raw_models, X_sample, feature_names):
     """
-    Compute SHAP values and global rankings for the baseline and cost-sensitive models.
+    Compute SHAP values and global rankings for all provided raw models.
+
+    raw_models should contain already trained models, for example:
+    {
+        "baseline": baseline_xgb_for_xai,
+        "conservative": conservative_xgb_for_xai,
+        "moderate": moderate_xgb_for_xai,
+        "aggressive": aggressive_xgb_for_xai,
+    }
     """
     shap_values_dict = {}
     rankings = {}
 
-    shap_values_dict["baseline"], rankings["baseline"] = compute_shap_ranking(
-        baseline_model,
-        X_sample,
-        feature_names,
-        "baseline",
-    )
-
-    for regime, model in raw_cost_models.items():
-        shap_values_dict[regime], rankings[regime] = compute_shap_ranking(
+    for model_name, model in raw_models.items():
+        print(f"[XAI] Computing SHAP ranking for: {model_name}")
+        shap_values_dict[model_name], rankings[model_name] = compute_shap_ranking(
             model,
             X_sample,
             feature_names,
-            regime,
+            model_name,
         )
 
     return shap_values_dict, rankings
@@ -195,6 +173,12 @@ def compute_security_feature_shift(rankings, security_features=None):
     """
     if security_features is None:
         security_features = DEFAULT_SECURITY_FEATURES
+
+    available_features = set(rankings["baseline"]["feature"].values)
+    missing = [f for f in security_features if f not in available_features]
+
+    if missing:
+        print(f"[WARNING] Security features not found in rankings: {missing}")
 
     rows = []
 
@@ -387,16 +371,14 @@ def save_shap_summary_plots(
 
 
 def run_xai_analysis(
-    baseline_model,
-    regimes,
+    raw_models,
     X_test,
+    y_test,
     feature_names,
-    X_train_res,
-    y_train_res,
-    get_sample_weights_func,
     encoder,
+    regimes=("conservative", "moderate", "aggressive"),
     random_state=42,
-    sample_size=1000,
+    n_per_class=200,
     output_dir="results/xai",
     target_classes=("R2L", "U2R"),
     security_features=None,
@@ -404,34 +386,43 @@ def run_xai_analysis(
     """
     End-to-end XAI audit for the cost-sensitive IDS pipeline.
 
-    This function:
-    1. Creates a fixed SHAP sample.
-    2. Trains raw cost-sensitive XGBoost models for SHAP.
-    3. Computes global SHAP rankings.
-    4. Computes global Spearman rank correlations.
-    5. Tracks security-critical feature shifts.
-    6. Computes class-specific SHAP rankings for R2L and U2R.
-    7. Computes class-specific Spearman correlations.
-    8. Saves result tables and plots.
-    """
-    X_sample = make_shap_sample(
-        X_test,
-        feature_names,
-        sample_size=sample_size,
-        random_state=random_state,
-    )
+    This function does not train models. It receives already trained raw models
+    from the modelling pipeline and explains them using SHAP.
 
-    raw_cost_models = train_raw_cost_sensitive_xgb_models(
-        regimes=regimes,
-        X_train=X_train_res,
-        y_train=y_train_res,
-        get_sample_weights_func=get_sample_weights_func,
+    Expected raw_models format:
+    {
+        "baseline": baseline_xgb_for_xai,
+        "conservative": conservative_xgb_for_xai,
+        "moderate": moderate_xgb_for_xai,
+        "aggressive": aggressive_xgb_for_xai,
+    }
+
+    This function:
+    1. Creates a stratified SHAP sample using y_test.
+    2. Computes global SHAP rankings.
+    3. Computes global Spearman rank correlations as a sanity check.
+    4. Tracks security-critical feature shifts.
+    5. Computes class-specific SHAP rankings for R2L and U2R.
+    6. Computes class-specific Spearman correlations.
+    7. Saves result tables and plots.
+    """
+    if "baseline" not in raw_models:
+        raise ValueError("raw_models must include a 'baseline' model.")
+
+    missing_regimes = [regime for regime in regimes if regime not in raw_models]
+    if missing_regimes:
+        raise ValueError(f"raw_models is missing cost-sensitive models: {missing_regimes}")
+
+    X_sample, y_sample = make_shap_sample(
+        X_test,
+        y_test,
+        feature_names,
+        n_per_class=n_per_class,
         random_state=random_state,
     )
 
     shap_values_dict, rankings = compute_all_shap_rankings(
-        baseline_model=baseline_model,
-        raw_cost_models=raw_cost_models,
+        raw_models=raw_models,
         X_sample=X_sample,
         feature_names=feature_names,
     )
@@ -475,7 +466,7 @@ def run_xai_analysis(
 
     return {
         "X_sample": X_sample,
-        "raw_cost_models": raw_cost_models,
+        "y_sample": y_sample,
         "shap_values_dict": shap_values_dict,
         "rankings": rankings,
         "global_spearman_df": global_spearman_df,
