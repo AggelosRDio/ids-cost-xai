@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import shap
 
 from scipy.stats import spearmanr
+from lime.lime_tabular import LimeTabularExplainer
 
 
 DEFAULT_SECURITY_FEATURES = (
@@ -474,4 +475,195 @@ def run_xai_analysis(
         "class_spearman_df": class_spearman_df,
         "spearman_summary_df": spearman_summary_df,
         "security_shift_df": security_shift_df,
+    }
+
+def _predict_encoded(model, X):
+    """
+    Return encoded class predictions using model probabilities.
+    """
+    probas = model.predict_proba(X)
+    return np.argmax(probas, axis=1)
+
+
+def find_lime_candidate_samples(
+    raw_models,
+    X_test,
+    y_test,
+    feature_names,
+    encoder,
+    target_model_name="aggressive",
+    target_classes=("R2L", "U2R"),
+    max_samples_per_class=2,
+):
+    """
+    Find interesting samples for local LIME explanations.
+
+    Priority:
+    1. Samples where the baseline model is wrong but the target cost-sensitive
+       model is correct.
+    2. If not enough such samples exist, fall back to samples where the target
+       cost-sensitive model is correct.
+
+    This focuses LIME on high-cost minority classes such as R2L and U2R.
+    """
+    if "baseline" not in raw_models:
+        raise ValueError("raw_models must include a 'baseline' model.")
+
+    if target_model_name not in raw_models:
+        raise ValueError(f"raw_models does not include target model: {target_model_name}")
+
+    X_df = ensure_dataframe(X_test, feature_names)
+    y_arr = np.asarray(y_test)
+
+    baseline_pred = _predict_encoded(raw_models["baseline"], X_df)
+    target_pred = _predict_encoded(raw_models[target_model_name], X_df)
+
+    rows = []
+
+    for class_name in target_classes:
+        class_idx = int(np.where(encoder.classes_ == class_name)[0][0])
+
+        class_indices = np.where(y_arr == class_idx)[0]
+
+        corrected = [
+            idx for idx in class_indices
+            if baseline_pred[idx] != y_arr[idx] and target_pred[idx] == y_arr[idx]
+        ]
+
+        fallback_correct = [
+            idx for idx in class_indices
+            if target_pred[idx] == y_arr[idx] and idx not in corrected
+        ]
+
+        selected = corrected[:max_samples_per_class]
+
+        if len(selected) < max_samples_per_class:
+            selected.extend(
+                fallback_correct[: max_samples_per_class - len(selected)]
+            )
+
+        for idx in selected:
+            rows.append(
+                {
+                    "sample_index": int(idx),
+                    "true_class": encoder.inverse_transform([y_arr[idx]])[0],
+                    "baseline_prediction": encoder.inverse_transform([baseline_pred[idx]])[0],
+                    f"{target_model_name}_prediction": encoder.inverse_transform([target_pred[idx]])[0],
+                    "selection_reason": (
+                        "baseline_wrong_target_correct"
+                        if idx in corrected
+                        else "target_correct_fallback"
+                    ),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def run_lime_analysis(
+    raw_models,
+    X_train,
+    X_test,
+    y_test,
+    feature_names,
+    encoder,
+    target_model_name="aggressive",
+    target_classes=("R2L", "U2R"),
+    max_samples_per_class=2,
+    num_features=10,
+    output_dir="results/xai/lime",
+    random_state=42,
+):
+    """
+    Run local LIME explanations for selected high-cost minority-class samples.
+
+    LIME is used here as a local explanation method. Unlike SHAP global
+    rankings, LIME explains individual predictions and helps inspect concrete
+    R2L/U2R cases where the cost-sensitive model may correct a baseline error.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    X_train_df = ensure_dataframe(X_train, feature_names)
+    X_test_df = ensure_dataframe(X_test, feature_names)
+
+    candidates_df = find_lime_candidate_samples(
+        raw_models=raw_models,
+        X_test=X_test_df,
+        y_test=y_test,
+        feature_names=feature_names,
+        encoder=encoder,
+        target_model_name=target_model_name,
+        target_classes=target_classes,
+        max_samples_per_class=max_samples_per_class,
+    )
+
+    candidates_path = os.path.join(output_dir, "lime_candidate_samples.csv")
+    candidates_df.to_csv(candidates_path, index=False)
+    print(f"[LIME] Saved candidate samples: {candidates_path}")
+
+    if candidates_df.empty:
+        print("[LIME] No candidate samples found. No LIME explanations were generated.")
+        return {
+            "lime_candidates": candidates_df,
+            "lime_output_dir": output_dir,
+        }
+
+    explainer = LimeTabularExplainer(
+        training_data=X_train_df.values,
+        feature_names=list(feature_names),
+        class_names=list(encoder.classes_),
+        mode="classification",
+        discretize_continuous=True,
+        random_state=random_state,
+    )
+
+    explanation_rows = []
+
+    for _, row in candidates_df.iterrows():
+        sample_idx = int(row["sample_index"])
+        true_class = row["true_class"]
+
+        instance = X_test_df.iloc[sample_idx].values
+
+        for model_name in ["baseline", target_model_name]:
+            model = raw_models[model_name]
+            pred_encoded = _predict_encoded(model, X_test_df.iloc[[sample_idx]])[0]
+            pred_class = encoder.inverse_transform([pred_encoded])[0]
+
+            explanation = explainer.explain_instance(
+                data_row=instance,
+                predict_fn=model.predict_proba,
+                labels=[pred_encoded],
+                num_features=num_features,
+            )
+
+            file_name = (
+                f"lime_{model_name}_sample_{sample_idx}_"
+                f"true_{true_class}_pred_{pred_class}.html"
+            )
+            file_path = os.path.join(output_dir, file_name)
+
+            explanation.save_to_file(file_path)
+
+            explanation_rows.append(
+                {
+                    "sample_index": sample_idx,
+                    "model": model_name,
+                    "true_class": true_class,
+                    "predicted_class": pred_class,
+                    "explanation_file": file_path,
+                }
+            )
+
+            print(f"[LIME] Saved explanation: {file_path}")
+
+    explanations_df = pd.DataFrame(explanation_rows)
+    explanations_path = os.path.join(output_dir, "lime_explanations_index.csv")
+    explanations_df.to_csv(explanations_path, index=False)
+    print(f"[LIME] Saved explanation index: {explanations_path}")
+
+    return {
+        "lime_candidates": candidates_df,
+        "lime_explanations": explanations_df,
+        "lime_output_dir": output_dir,
     }
