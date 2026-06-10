@@ -8,7 +8,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
- 
+from scipy.stats import spearmanr
+from scipy.stats import rankdata
+
 from logger import Logger
 from Costs import total_economic_loss, CLASS_TO_IDX
  
@@ -30,7 +32,7 @@ def show_confusion_matrix(y_true_enc, y_pred_enc, le):
     df = pd.DataFrame(cm, index=le.classes_, columns=le.classes_)
     df.index.name = "True \\ Pred"
     log.info("Confusion Matrix: ")
-    log.info("df.to_string()")
+    log.info(df.to_string())
     return cm
 
 def report_tel(y_true_enc, y_pred_enc, model_name="Model", regime=DEFAULT_REGIME):
@@ -115,6 +117,61 @@ def plot_cost_roc(models: dict, X_test, y_test_enc, le,
     plt.show()
  
  
+def spearman_shap_correlation(
+    shap_baseline: np.ndarray,
+    shap_costsens: np.ndarray,
+    feature_names: list,
+    le,
+    save=True,
+):
+    """
+    Compute Spearman rank correlation between baseline and cost-sensitive
+    SHAP feature importance rankings, per class.
+ 
+    A low ρ indicates a genuine 'attentional shift' toward security-critical
+    features which is the core novelty metric of the proposal.
+ 
+    shap_baseline / shap_costsens: (n_samples, n_features, n_classes)
+    """
+    import os; os.makedirs(FIGURE_DIR, exist_ok=True)
+    n_classes = shap_baseline.shape[2]
+    results = []
+ 
+    print(f"\n{'─'*60}")
+    print("  Spearman ρ — Baseline vs Cost-Sensitive SHAP Rankings")
+    print(f"{'─'*60}")
+    print(f"  {'Class':<10} {'ρ':>8}  {'p-value':>10}  {'Interpretation'}")
+    print(f"  {'─'*8}  {'─'*7}  {'─'*9}  {'─'*25}")
+ 
+    for cls_idx in range(n_classes):
+        cls_name = le.inverse_transform([cls_idx])[0]
+        imp_base = np.abs(shap_baseline[:, :, cls_idx]).mean(axis=0)
+        imp_cost = np.abs(shap_costsens[:, :, cls_idx]).mean(axis=0)
+        rho, p   = spearmanr(rankdata(-imp_base), rankdata(-imp_cost))
+        interp   = "strong shift ✓" if rho < 0.5 else ("moderate shift" if rho < 0.75 else "similar ranking")
+        results.append({"class": cls_name, "rho": rho, "p_value": p})
+        print(f"  {cls_name:<10} {rho:>8.3f}  {p:>10.4f}  {interp}")
+ 
+    # Bar chart of ρ per class
+    df = pd.DataFrame(results)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    colors = [CLASS_COLORS.get(c, "#607D8B") for c in df["class"]]
+    ax.barh(df["class"], df["rho"], color=colors, edgecolor="white")
+    ax.axvline(0.75, color="gray", linestyle="--", lw=1, label="ρ=0.75 threshold")
+    ax.axvline(0.50, color="gray", linestyle=":",  lw=1, label="ρ=0.50 threshold")
+    ax.set_xlabel("Spearman ρ  (lower = greater attentional shift)")
+    ax.set_title("SHAP Rank Correlation: Baseline vs Cost-Sensitive", fontweight="bold")
+    ax.set_xlim(0, 1)
+    ax.legend(fontsize=9)
+    ax.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    if save:
+        plt.savefig(f"{FIGURE_DIR}/spearman_correlation.png", dpi=150, bbox_inches="tight")
+    plt.show()
+ 
+    return df
+
+
   
 def plot_ablation(ablation_results: dict, save=True):
     """
